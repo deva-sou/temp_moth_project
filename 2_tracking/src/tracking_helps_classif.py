@@ -3,6 +3,7 @@ import copy
 import numpy as np
 import pickle
 
+# Strategies
 def calculate_best_confidence_max_value(df,df_specific_id):
     '''
     Calculate the best confidence score based on the strategy max value. 
@@ -12,7 +13,7 @@ def calculate_best_confidence_max_value(df,df_specific_id):
     '''
     max_confidence_index = df_specific_id['confidence'].idxmax()
     new_label = df.iloc[max_confidence_index,df.columns.get_loc("subclass")]
-    return max_confidence_index,new_label
+    return df_specific_id,max_confidence_index,new_label
 
 def calculate_best_confidence_most_frequent(df,df_specific_id):
     '''
@@ -28,42 +29,42 @@ def calculate_best_confidence_most_frequent(df,df_specific_id):
         new_label = most_frequent_species[0]
     most_frequent_specie = df_specific_id[df_specific_id['subclass'] == new_label]
     max_confidence_index = most_frequent_specie['confidence'].idxmax()
-    return max_confidence_index,new_label
+    return df_specific_id,max_confidence_index,new_label
 
 def calculate_best_confidence_avg_max(df,df_specific_id):
     '''
     Calculate the mean for each unique value fo subclass
     Return the specie name and the index
     '''
-    avgs = df_specific_id.reset_index(level=0).groupby(['subclass','index']).agg({'confidence': ['mean']})
-    #avgs.to_pickle("avgs.pkl")
+    #first create the subdataframe with the indexes saved.
+    avgs = df_specific_id.reset_index().groupby(['subclass','index']).agg({'confidence': ['mean']}).reset_index().set_index('index')
+    avgs.columns = ['subclass','confidence']
+    avgs.index.name = None
+    avgs.to_pickle("../../0_database/results/avgs_raw.pkl")
 
-    #first get label from avgmax
-    df_mean = avgs.groupby(['subclass']).mean()
-    new_label = df_mean.confidence.idxmax().values[0]
-    
     #second get the avg of the max confident label
-    new_confidence_score = df_mean.loc[new_label].values[0]
-    
-    #third get the max confidence index
-    max_confidence_index = avgs['confidence'].idxmax()
-    
-    #replace the avg max for each iteration of label
-    df.loc['Hemaris gracilis',2082] = 100
+    df_mean = avgs.assign(mean= avgs.groupby(['subclass']).transform('mean'))
+    df_mean = df_mean.drop(columns=['confidence'])
+    df_mean = df_mean.rename(columns={'mean':'confidence'})
+    df_mean.to_pickle("../../0_database/results/df_mean.pkl")   
 
-    print(new_label, new_confidence_score)
-    print(max_confidence_index)
+    #third get the max confidence index and new label
+    max_confidence_index = df_mean['confidence'].idxmax()
+    new_label = df_mean.loc[max_confidence_index].values[0]
 
-    return 0,new_label
+    return df_mean,max_confidence_index,new_label
 
+# Main
 def modify_label_confidence(df,df_specific_id):
     '''
-    Modify the label and confidence depending on the strategies
+    Modify the label and confidence depending on the strategies. 
+    From the dataframe specific to a trackID, we extract the best choice by the classification algorithm for a specific choice strategy 
+    Then for each row of the specific dataframe we extract the index and make changes in the base dataframe.
+     
     '''
-    max_confidence_index,new_label = calculate_best_confidence_avg_max(df,df_specific_id)
-    #print(f"Selected index and value: {new_label}: {max_confidence_index}")
-    for index, row in df_specific_id.iterrows():
-        if (index != max_confidence_index) : # & (row['subclass'] != new_label)
+    df_specific_id_modified,max_confidence_index,new_label = calculate_best_confidence_avg_max(df,df_specific_id)
+    for index, row in df_specific_id_modified.iterrows():
+        if (index != max_confidence_index) :
             df.iloc[index, df.columns.get_loc("subclass")] = new_label
             df.iloc[index, df.columns.get_loc("confidence")] = 'smoothed'
         
@@ -71,7 +72,7 @@ def smoothing_confidence_with_tracking(df_raw):
     '''
     Use the tracking insect results to smooth the classification.
     For each trackID, we created a sub-dataframe based on the specific trackID. 
-    Then modify labels and confidence based on a specific strategy with #*modify_label_confidence
+    Then modify labels and confidence based on a specific strategy with "modify_label_confidence()"
     #TODO: replace empty by nan
     '''
     df = df_raw.copy()
@@ -87,7 +88,6 @@ def smoothing_confidence_with_tracking(df_raw):
 def count_species(csv):
     '''
     Count unique individual per species
-    @params csv: take a csv
     '''
     df = pd.read_csv(csv)
     df_count = df.groupby(['subclass']).size().sort_values(ascending=False)
@@ -95,6 +95,6 @@ def count_species(csv):
     return df_count
 
 def main():
-    df_raw = pd.read_csv("~/code/moth_project/0_database/tracking/track_localize_classify_annotation-2022_05_13.csv")
+    df_raw = pd.read_csv("../../0_database/tracking/track_localize_classify_annotation-2022_05_13.csv")
     df_modified = smoothing_confidence_with_tracking(df_raw)
     return df_modified
